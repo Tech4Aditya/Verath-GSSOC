@@ -1,40 +1,116 @@
+import logging
 from datetime import datetime, timedelta
 from typing import Optional
 
-import jwt
-from passlib.context import CryptContext
-from fastapi import HTTPException, Security, Depends
-from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+import bcrypt
+from jose import JWTError, jwt
+from motor.motor_asyncio import AsyncIOMotorClient
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
-from app.config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
+from app.config import settings
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-security = HTTPBearer()
+logger = logging.getLogger(__name__)
 
-def get_password_hash(password: str) -> str:
-    return pwd_context.hash(password)
+_mongo = AsyncIOMotorClient(settings.mongo_uri)
+_db = _mongo[settings.database_name]
+_users_col = _db["users"]
 
-def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+ACCESS_TOKEN_EXPIRE_MINUTES = 30
+REFRESH_TOKEN_EXPIRE_DAYS = 7
 
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
-    to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+ALGORITHM = "HS256"
 
-def get_current_user_id(auth: HTTPAuthorizationCredentials = Security(security)) -> str:
+
+# ── Password helpers ──────────────────────────────────────────────────────────
+def hash_password(password: str) -> str:
+    salt = bcrypt.gensalt()
+    return bcrypt.hashpw(password.encode('utf-8'), salt).decode('utf-8')
+
+
+def verify_password(plain: str, hashed: str) -> bool:
+    return bcrypt.checkpw(plain.encode('utf-8'), hashed.encode('utf-8'))
+
+
+# ── Token creation ────────────────────────────────────────────────────────────
+def create_access_token(username: str) -> str:
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    payload = {"sub": username, "type": "access", "exp": expire}
+    return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
+
+
+def create_refresh_token(username: str) -> str:
+    expire = datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+    payload = {"sub": username, "type": "refresh", "exp": expire}
+    return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
+
+
+# ── Token verification ────────────────────────────────────────────────────────
+def verify_access_token(token: str) -> Optional[str]:
+    """Returns username if valid access token, else None."""
     try:
-        payload = jwt.decode(auth.credentials, SECRET_KEY, algorithms=[ALGORITHM])
-        user_id = payload.get("sub")
-        if user_id is None:
-            raise HTTPException(status_code=401, detail="Invalid token")
-        return user_id
-    except jwt.ExpiredSignatureError:
-        raise HTTPException(status_code=401, detail="Token expired")
-    except jwt.InvalidTokenError:
-        raise HTTPException(status_code=401, detail="Invalid token")
+        payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
+        if payload.get("type") != "access":
+            return None
+        return payload.get("sub")
+    except JWTError:
+        return None
+
+
+def verify_refresh_token(token: str) -> Optional[str]:
+    """Returns username if valid refresh token, else None."""
+    try:
+        payload = jwt.decode(token, settings.secret_key, algorithms=[ALGORITHM])
+        if payload.get("type") != "refresh":
+            return None
+        return payload.get("sub")
+    except JWTError:
+        return None
+
+
+# ── User operations ───────────────────────────────────────────────────────────
+async def create_user(username: str, password: str) -> bool:
+    username = username.lower().strip()
+    existing = await _users_col.find_one({"username": username})
+    if existing:
+        return False
+    await _users_col.insert_one({
+        "username": username,
+        "password_hash": hash_password(password),
+        "created_at": datetime.utcnow(),
+    })
+    return True
+
+
+async def authenticate_user(username: str, password: str) -> Optional[str]:
+    username = username.lower().strip()
+    user = await _users_col.find_one({"username": username})
+    if not user or not verify_password(password, user["password_hash"]):
+        return None
+    return username
+
+
+async def get_user_id_from_username(username: str) -> Optional[str]:
+    """Get user_id from username."""
+    username = username.lower().strip()
+    user = await _users_col.find_one({"username": username})
+    if not user:
+        return None
+    return str(user.get("_id")) if "_id" in user else username
+
+
+# ── FastAPI dependencies ─────────────────────────────────────────────────────────
+_bearer = HTTPBearer()
+
+
+async def get_current_user_id(
+    creds: HTTPAuthorizationCredentials = Depends(_bearer),
+) -> str:
+    """Extract and verify user ID from Bearer token."""
+    username = verify_access_token(creds.credentials)
+    if not username:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+        )
+    return username

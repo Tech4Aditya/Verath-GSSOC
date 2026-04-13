@@ -1,11 +1,9 @@
 const API_BASE = "http://localhost:8000";
-let AUTH_TOKEN = localStorage.getItem('secondbrain_token');
+let AUTH_TOKEN = localStorage.getItem('sb_token');
 
 // Initialize dashboard
 document.addEventListener('DOMContentLoaded', function() {
-    if (!AUTH_TOKEN) {
-        showLoginModal();
-    } else {
+    if (AUTH_TOKEN) {
         initDashboard();
     }
 });
@@ -24,8 +22,9 @@ async function authFetch(url, options = {}) {
     
     const res = await fetch(url, options);
     if (res.status === 401) {
-        localStorage.removeItem('secondbrain_token');
-        location.reload();
+        localStorage.removeItem('sb_token');
+        localStorage.removeItem('sb_username');
+        window.location.href = 'auth.html';
     }
     return res;
 }
@@ -33,36 +32,14 @@ async function authFetch(url, options = {}) {
 // Load and display statistics
 async function loadStats() {
     try {
-        // Get timeline to calculate stats
-        const timelineRes = await authFetch(`${API_BASE}/timeline`);
-        const timelineData = await timelineRes.json();
+        const res = await authFetch(`${API_BASE}/statistics`);
+        const data = await res.json();
         
-        // Get all memories for speaker count
-        const queryRes = await authFetch(`${API_BASE}/query?q=*&limit=1000`);
-        const queryData = await queryRes.json();
-        
-        // Calculate stats
-        const totalMemories = timelineData.timeline ? timelineData.timeline.length : 0;
-        const speakers = new Set();
-        let importantCount = 0;
-        let todayCount = 0;
-        
-        if (timelineData.timeline) {
-            const today = new Date().toDateString();
-            timelineData.timeline.forEach(item => {
-                if (item.speaker) speakers.add(item.speaker);
-                if (item.importance >= 0.6) importantCount++;
-                if (new Date(item.timestamp * 1000).toDateString() === today) {
-                    todayCount++;
-                }
-            });
-        }
-        
-        // Update UI
-        document.getElementById('total-memories').textContent = totalMemories;
-        document.getElementById('total-speakers').textContent = speakers.size;
-        document.getElementById('important-memories').textContent = importantCount;
-        document.getElementById('today-memories').textContent = todayCount;
+        // Update UI with statistics
+        document.getElementById('total-memories').textContent = data.total || 0;
+        document.getElementById('total-speakers').textContent = Object.keys(data.by_speaker || {}).length;
+        document.getElementById('important-memories').textContent = Object.values(data.by_intent || {}).reduce((a, b) => a + b, 0);
+        document.getElementById('today-memories').textContent = data.recent_count || 0;
         
         // Update status
         updateStatus(true);
@@ -127,8 +104,11 @@ async function loadTimeline() {
                 <div class="timeline-item">
                     <div class="timeline-time">${item.time || 'NOW'}</div>
                     <div class="timeline-text">${item.text || '...'}</div>
-                    <div class="timeline-speaker">
-                        <i class="fas fa-user-circle"></i> ${item.speaker || 'Unknown Entity'}
+                    <div class="timeline-meta">
+                        <span class="timeline-speaker">
+                            <i class="fas fa-user-circle"></i> ${item.speaker || 'Unknown Entity'}
+                        </span>
+                        ${item.intent ? `<span class="timeline-intent">${item.intent}</span>` : ''}
                     </div>
                 </div>
             `).join('');
@@ -193,13 +173,26 @@ async function askQuery() {
                 <p>${data.answer}</p>
             </div>`;
             
+            if (data.sources && data.sources.length > 0) {
+                const sourcesHTML = data.sources.map(source => `
+                    <div style="font-size: 0.85rem; color: var(--text-dim); margin-top: 5px;">
+                        • ${source.speaker} (${source.timestamp}) - Importance: ${(source.importance * 100).toFixed(0)}%
+                    </div>
+                `).join('');
+                resultHTML += `<div style="margin-top: 16px;">
+                    <h4 style="color: var(--secondary); font-size: 0.8rem; text-transform: uppercase; margin-bottom: 8px;">Sources</h4>
+                    ${sourcesHTML}
+                </div>`;
+            }
+            
             if (data.context && data.context.length > 0) {
                 const contextHTML = data.context.map(item => `<div style="font-size: 0.85rem; color: var(--text-dim); margin-top: 5px;">• ${item}</div>`).join('');
                 resultHTML += `<div style="margin-top: 16px;">
-                    <h4 style="color: var(--secondary); font-size: 0.8rem; text-transform: uppercase; margin-bottom: 8px;">Source Context</h4>
+                    <h4 style="color: var(--secondary); font-size: 0.8rem; text-transform: uppercase; margin-bottom: 8px;">Context</h4>
                     ${contextHTML}
                 </div>`;
             }
+            
             queryResult.innerHTML = resultHTML;
         } else {
             queryResult.innerHTML = '<p>No matching clusters found in memory.</p>';
@@ -212,56 +205,3 @@ async function askQuery() {
     }
 }
 
-// Legacy functions for backward compatibility
-// ... keep others ...
-
-function showLoginModal() {
-    document.getElementById('login-overlay').style.display = 'flex';
-}
-
-async function handleLogin() {
-    const user = document.getElementById('login-username').value;
-    const pass = document.getElementById('login-password').value;
-    
-    try {
-        const res = await fetch(`${API_BASE}/auth/login`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username: user, password: pass })
-        });
-        const data = await res.json();
-        
-        if (data.access_token) {
-            localStorage.setItem('secondbrain_token', data.access_token);
-            AUTH_TOKEN = data.access_token;
-            document.getElementById('login-overlay').style.display = 'none';
-            initDashboard();
-        } else {
-            alert(data.detail || 'Login failed');
-        }
-    } catch (e) {
-        alert('Connection error');
-    }
-}
-
-async function handleSignup() {
-    const user = document.getElementById('login-username').value;
-    const pass = document.getElementById('login-password').value;
-    
-    try {
-        const res = await fetch(`${API_BASE}/auth/signup`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username: user, password: pass })
-        });
-        const data = await res.json();
-        
-        if (res.ok) {
-            alert('Signup successful! Please login.');
-        } else {
-            alert(data.detail || 'Signup failed');
-        }
-    } catch (e) {
-        alert('Connection error');
-    }
-}

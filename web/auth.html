@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Authenticate | SecondBrain</title>
+    <link rel="stylesheet" href="auth.css">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap" rel="stylesheet">
+</head>
+<body class="auth-page">
+    <div class="neural-bg">
+        <div class="blob blob-1"></div>
+        <div class="blob blob-2"></div>
+    </div>
+
+    <div class="auth-container">
+        <div class="auth-card" id="auth-card">
+            <!-- Login Form -->
+            <div id="login-view">
+                <div class="auth-header">
+                    <div class="auth-logo">
+                        <i class="fas fa-brain"></i>
+                    </div>
+                    <h1>Welcome Back</h1>
+                    <p>Access your personal neural network</p>
+                </div>
+
+                <form id="login-form">
+                    <div class="form-group">
+                        <label>Username</label>
+                        <div class="input-wrapper">
+                            <i class="fas fa-user"></i>
+                            <input type="text" id="username" class="auth-input" placeholder="e.g. aris_ai" required>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Password</label>
+                        <div class="input-wrapper">
+                            <i class="fas fa-lock"></i>
+                            <input type="password" id="password" class="auth-input" placeholder="••••••••" required>
+                        </div>
+                    </div>
+                    <button type="submit" class="auth-btn" id="login-btn">
+                        <span>Initialize Session</span>
+                    </button>
+                </form>
+
+                <div class="auth-footer">
+                    Don't have a SecondBrain? <a href="#" id="show-signup">Create one</a>
+                </div>
+            </div>
+
+            <!-- Signup Form (Hidden by default) -->
+            <div id="signup-view" style="display: none;">
+                <div class="auth-header">
+                    <div class="auth-logo">
+                        <i class="fas fa-plus-circle"></i>
+                    </div>
+                    <h1>Create Instance</h1>
+                    <p>Start your journey to digital immortality</p>
+                </div>
+
+                <form id="signup-form">
+                    <div class="form-group">
+                        <label>Choose Username</label>
+                        <div class="input-wrapper">
+                            <i class="fas fa-user-plus"></i>
+                            <input type="text" id="reg-username" class="auth-input" placeholder="Username" required>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Secure Password</label>
+                        <div class="input-wrapper">
+                            <i class="fas fa-key"></i>
+                            <input type="password" id="reg-password" class="auth-input" placeholder="Password" required>
+                        </div>
+                    </div>
+                    <button type="submit" class="auth-btn" id="signup-btn">
+                        <span>Deploy Instance</span>
+                    </button>
+                </form>
+
+                <div class="auth-footer">
+                    Already have an instance? <a href="#" id="show-login">Sign in</a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="auth.js"></script>
+</body>
+</html>

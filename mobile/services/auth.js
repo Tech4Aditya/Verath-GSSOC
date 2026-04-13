@@ -1,10 +1,11 @@
 import React, { useState, createContext, useEffect } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import axios from 'axios';
+import { API_BASE_URL } from "../config";
 
 export const AuthContext = createContext({});
 
-const API_BASE = "http://localhost:8000"; // Update for real device with local IP
+const API_BASE = API_BASE_URL;
 
 export const AuthProvider = ({ children }) => {
   const [userToken, setUserToken] = useState(null);

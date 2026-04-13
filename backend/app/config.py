@@ -1,26 +1,73 @@
-import os
-from pathlib import Path
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from dotenv import load_dotenv
 
-BASE_DIR = Path(__file__).resolve().parents[2]
-load_dotenv(BASE_DIR / ".env")
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file="../.env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",       # silently ignore unknown env vars
+        protected_namespaces=("settings_",),
+    )
 
-OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
-MODEL_NAME = os.getenv("MODEL_NAME", "mistral")
-EMBED_MODEL = os.getenv("EMBED_MODEL", "nomic-embed-text")
-WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
-VECTOR_DB_PATH = str(BASE_DIR / os.getenv("VECTOR_DB_PATH", "data/vector_db/index.faiss"))
-VECTOR_META_PATH = str(BASE_DIR / os.getenv("VECTOR_META_PATH", "data/vector_db/meta.pkl"))
-VOICE_DB_PATH = str(BASE_DIR / os.getenv("VOICE_DB_PATH", "data/voices.pkl"))
-HOST = os.getenv("HOST", "0.0.0.0")
-PORT = int(os.getenv("PORT", "8000"))
-DEFAULT_RECORD_SECONDS = int(os.getenv("DEFAULT_RECORD_SECONDS", "10"))
-ALLOW_CORS = [item.strip() for item in os.getenv("ALLOW_CORS", "*").split(",") if item.strip()]
+    # ── Ollama ────────────────────────────────────────────────────────────────
+    ollama_url: str = "http://localhost:11434"
+    model_name: str = "mistral"
+    embed_model: str = "nomic-embed-text"
 
-# Database & Authentication
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
-DATABASE_NAME = os.getenv("DATABASE_NAME", "secondbrain")
-SECRET_KEY = os.getenv("SECRET_KEY", "your-super-secret-key-change-me-in-production")
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 1 week
+    # ── Whisper ───────────────────────────────────────────────────────────────
+    whisper_model: str = "base"
+    whisper_device: str = "cpu"  # default to cpu for stability on Windows
+    whisper_compute_type: str = "int8" # space-efficient
+
+
+    # ── Server ────────────────────────────────────────────────────────────────
+    host: str = "0.0.0.0"
+    port: int = 8002
+    default_record_seconds: int = 10
+    allow_cors: str = "*"
+
+    # ── Storage ───────────────────────────────────────────────────────────────
+    vector_db_path: str = "data/chroma_db"
+    voice_db_path: str = "data/voices.pkl"
+
+    # ── MongoDB (required) ────────────────────────────────────────────────────
+    mongo_uri: str = Field(..., description="MongoDB connection string — required")
+    database_name: str = "secondbrain"
+
+    # ── Security (required) ───────────────────────────────────────────────────
+    secret_key: str = Field(..., description="JWT secret key — required")
+
+    # ── Validators ────────────────────────────────────────────────────────────
+    @field_validator("secret_key")
+    @classmethod
+    def secret_key_must_be_strong(cls, v: str) -> str:
+        if len(v) < 32:
+            raise ValueError(
+                "SECRET_KEY must be at least 32 characters. "
+                "Generate one with: python -c \"import secrets; print(secrets.token_hex(32))\""
+            )
+        if v in ("your-super-secret-key", "changeme", "secret"):
+            raise ValueError("SECRET_KEY is set to a known insecure default — please change it.")
+        return v
+
+    @field_validator("port")
+    @classmethod
+    def port_must_be_valid(cls, v: int) -> int:
+        if not (1024 <= v <= 65535):
+            raise ValueError("PORT must be between 1024 and 65535")
+        return v
+
+    @field_validator("mongo_uri")
+    @classmethod
+    def mongo_uri_must_look_valid(cls, v: str) -> str:
+        if not (v.startswith("mongodb://") or v.startswith("mongodb+srv://")):
+            raise ValueError(
+                "MONGO_URI must start with 'mongodb://' or 'mongodb+srv://'"
+            )
+        return v
+
+
+# Single import point used everywhere in the app
+settings = Settings()

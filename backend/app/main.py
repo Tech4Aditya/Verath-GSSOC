@@ -1,53 +1,103 @@
+import logging
 from contextlib import asynccontextmanager
+
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import ALLOW_CORS
-from app.routes import advanced, auth, privacy, query, record, speaker
-from app.services.database import connect_to_mongo, close_mongo_connection
+from app.config import settings
+from app.core.logging_config import setup_logging
+from app.workers.background_worker import start_worker
+from app.services.reminder_service import check_and_fire_reminders
 
-import logging
-from fastapi import Request
-from fastapi.responses import JSONResponse
+# ── Routers ───────────────────────────────────────────────────────────────────
+from app.routes.auth import router as auth_router
+from app.routes.query import router as query_router
+from app.routes.record import router as record_router
+from app.routes.advanced import router as advanced_router
+from app.routes.speaker import router as speaker_router
+from app.routes.privacy import router as privacy_router
+from app.routes.pipeline_routes import router as pipeline_router
+from app.routes.reminders import router as reminders_router   # new
 
-# Configure structured logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-logger = logging.getLogger("SecondBrain")
+setup_logging()
+logger = logging.getLogger(__name__)
 
+_scheduler = AsyncIOScheduler(timezone="UTC")
+
+
+# ── Lifespan ──────────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Initializing SecondBrain core...")
-    await connect_to_mongo()
-    yield
-    await close_mongo_connection()
-    logger.info("SecondBrain core shut down.")
+    logger.info("SecondBrain starting up...")
 
-app = FastAPI(title="SecondBrain", version="1.0.0", lifespan=lifespan)
+    # 1. Start background worker queue
+    start_worker()
 
-@app.exception_handler(Exception)
-async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Global error on {request.url}: {exc}", exc_info=True)
-    return JSONResponse(
-        status_code=500,
-        content={"detail": "An internal neural error occurred. Please try again later."},
+    # 2. Start reminder scheduler — runs check_and_fire_reminders every 15 min
+    _scheduler.add_job(
+        check_and_fire_reminders,
+        trigger="interval",
+        minutes=15,
+        id="reminder_check",
+        replace_existing=True,
+        misfire_grace_time=60,   # allow 60s late start before skipping
     )
+    _scheduler.start()
+    logger.info("Reminder scheduler started (interval: 15 min)")
+
+    yield
+
+    # Shutdown
+    _scheduler.shutdown(wait=False)
+    logger.info("SecondBrain shut down cleanly")
+
+
+# ── App ───────────────────────────────────────────────────────────────────────
+app = FastAPI(
+    title="SecondBrain API",
+    version="3.0.0",
+    description="AI-powered personal memory system",
+    lifespan=lifespan,
+)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOW_CORS if ALLOW_CORS != ["*"] else ["*"],
+    allow_origins=settings.allow_cors.split(","),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.include_router(record.router, tags=["record"])
-app.include_router(query.router, tags=["query"])
-app.include_router(advanced.router, tags=["advanced"])
-app.include_router(auth.router, prefix="/auth", tags=["auth"])
-app.include_router(privacy.router, prefix="/privacy", tags=["privacy"])
-app.include_router(speaker.router, prefix="/speaker", tags=["speaker"])
+# ── Route registration ────────────────────────────────────────────────────────
+app.include_router(auth_router)
+app.include_router(query_router)
+app.include_router(record_router)
+app.include_router(advanced_router)
+app.include_router(speaker_router)
+app.include_router(privacy_router)
+app.include_router(pipeline_router)
+app.include_router(reminders_router)    # new
+
+
+@app.get("/status")
+async def status():
+    # Get total memory count from MongoDB directly for efficiency
+    from app.services.memory_store import _memories_collection
+    try:
+        col = _memories_collection()
+        total_nodes = await col.count_documents({})
+    except Exception:
+        total_nodes = 0
+
+    return {
+        "status": "running",
+        "version": "3.0.0",
+        "nodes": total_nodes,
+        "scheduler": "running" if _scheduler.running else "stopped",
+    }
 
 
 @app.get("/")
-def root():
-    return {"name": "SecondBrain", "status": "ok"}
+async def root():
+    return {"message": "SecondBrain API v3.0.0"}

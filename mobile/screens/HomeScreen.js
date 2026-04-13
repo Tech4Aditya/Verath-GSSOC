@@ -1,112 +1,206 @@
 import React, { useState, useEffect } from "react";
-import { View, Text, StyleSheet, TouchableOpacity, Animated, Easing } from "react-native";
+import { View, Text, StyleSheet, TouchableOpacity, Animated, Easing, Dimensions, ScrollView } from "react-native";
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { getStatus, getInsights } from "../services/api";
+
+const { width } = Dimensions.get("window");
 
 export default function HomeScreen() {
-  const [status, setStatus] = useState("Listening");
-  const [scaleValue] = useState(new Animated.Value(1));
-  const [opacityValue] = useState(new Animated.Value(0.3));
+  const [isListening, setIsListening] = useState(true);
+  const [pulseAnim] = useState(new Animated.Value(1));
+  const [stats, setStats] = useState({
+    nodes: "0",
+    insights: "0",
+    uptime: "..."
+  });
+  const [neuralStream, setNeuralStream] = useState([]);
+
+  const fetchStats = async () => {
+    if (!isListening) return;
+    try {
+      const [statusData, insightsData] = await Promise.all([
+        getStatus(),
+        getInsights()
+      ]);
+      
+      setStats({
+        nodes: statusData.nodes?.toLocaleString() || "0",
+        insights: insightsData.insights?.length?.toString() || "0",
+        uptime: (statusData.status === "ok" || statusData.status === "running") ? "Online" : "Offline"
+      });
+
+      if (insightsData.insights) {
+        setNeuralStream(insightsData.insights.slice(0, 5));
+      }
+    } catch (error) {
+      console.error("Failed to fetch stats:", error);
+    }
+  };
 
   useEffect(() => {
-    if (status === "Listening") {
+    const checkAuthAndFetch = async () => {
+      const token = await AsyncStorage.getItem("sb_token");
+      if (token && isListening) {
+        fetchStats();
+      }
+    };
+
+    checkAuthAndFetch();
+    const interval = setInterval(() => {
+      checkAuthAndFetch();
+    }, isListening ? 10000 : 30000);
+    
+    return () => clearInterval(interval);
+  }, [isListening]);
+
+  useEffect(() => {
+    if (isListening) {
       Animated.loop(
-        Animated.parallel([
-          Animated.sequence([
-            Animated.timing(scaleValue, {
-              toValue: 1.5,
-              duration: 2000,
-              easing: Easing.out(Easing.ease),
-              useNativeDriver: true,
-            }),
-            Animated.timing(scaleValue, {
-              toValue: 1,
-              duration: 2000,
-              easing: Easing.in(Easing.ease),
-              useNativeDriver: true,
-            }),
-          ]),
-          Animated.sequence([
-            Animated.timing(opacityValue, {
-              toValue: 0.7,
-              duration: 2000,
-              useNativeDriver: true,
-            }),
-            Animated.timing(opacityValue, {
-              toValue: 0.3,
-              duration: 2000,
-              useNativeDriver: true,
-            }),
-          ]),
+        Animated.sequence([
+          Animated.timing(pulseAnim, {
+            toValue: 1.2,
+            duration: 1500,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
+          Animated.timing(pulseAnim, {
+            toValue: 1,
+            duration: 1500,
+            easing: Easing.inOut(Easing.ease),
+            useNativeDriver: true,
+          }),
         ])
       ).start();
     } else {
-      scaleValue.setValue(1);
-      opacityValue.setValue(0.3);
+      pulseAnim.setValue(1);
     }
-  }, [status]);
+  }, [isListening]);
 
   return (
     <View style={styles.container}>
       <LinearGradient
-        colors={["#050a12", "#0d1117"]}
+        colors={["#020617", "#0f172a", "#020617"]}
         style={StyleSheet.absoluteFill}
       />
       
-      <View style={styles.header}>
-        <Text style={styles.headerTitle}>SecondBrain</Text>
-        <TouchableOpacity>
-          <MaterialCommunityIcons name="account-circle-outline" size={28} color="#94a3b8" />
+      {/* Background Decorative Blobs */}
+      <View style={[styles.blob, { top: -100, right: -100, backgroundColor: "rgba(56, 189, 248, 0.15)" }]} />
+      <View style={[styles.blob, { bottom: -100, left: -100, backgroundColor: "rgba(129, 140, 248, 0.1)" }]} />
+
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
+        <View style={styles.header}>
+          <View>
+            <Text style={styles.headerGreeting}>NEURAL INTERFACE v1.4</Text>
+            <Text style={styles.headerTitle}>SecondBrain</Text>
+          </View>
+          <TouchableOpacity style={styles.profileButton}>
+            <LinearGradient
+              colors={["#38bdf8", "#818cf8"]}
+              style={styles.profileGradient}
+            >
+              <MaterialCommunityIcons name="brain" size={24} color="#fff" />
+            </LinearGradient>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.mainCoreContainer}>
+          <View style={styles.visualizerContainer}>
+            <Animated.View style={[styles.pulseRing, { transform: [{ scale: pulseAnim }], opacity: 0.25 }]} />
+            <Animated.View style={[styles.pulseRing, { transform: [{ scale: Animated.multiply(pulseAnim, 1.5) }], opacity: 0.1 }]} />
+            
+            <TouchableOpacity 
+              activeOpacity={0.9}
+              onPress={() => setIsListening(!isListening)}
+              style={styles.coreButton}
+            >
+              <LinearGradient
+                colors={isListening ? ["#0ea5e9", "#2563eb"] : ["#334155", "#0f172a"]}
+                style={styles.coreGradient}
+              >
+                <MaterialCommunityIcons 
+                  name={isListening ? "pulse" : "power-off"} 
+                  size={54} 
+                  color="#fff" 
+                />
+              </LinearGradient>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.statusBadge}>
+            <View style={[styles.statusDot, { backgroundColor: isListening ? "#10b981" : "#64748b" }]} />
+            <Text style={styles.statusText}>{isListening ? "NEURAL CORE ACTIVE" : "SYSTEM STANDBY"}</Text>
+          </View>
+        </View>
+
+        <View style={styles.statsRow}>
+          <View style={styles.compactStatCard}>
+            <Text style={styles.compactStatLabel}>MEMORIES</Text>
+            <Text style={styles.compactStatValue}>{stats.nodes}</Text>
+          </View>
+          <View style={[styles.compactStatCard, styles.compactStatCardActive]}>
+            <Text style={[styles.compactStatLabel, { color: "#38bdf8" }]}>INSIGHTS</Text>
+            <Text style={styles.compactStatValue}>{stats.insights}</Text>
+          </View>
+          <View style={styles.compactStatCard}>
+            <Text style={styles.compactStatLabel}>STATUS</Text>
+            <Text style={[styles.compactStatValue, { fontSize: 14, color: isListening ? "#10b981" : "#94a3b8" }]}>{stats.uptime}</Text>
+          </View>
+        </View>
+
+        <View style={styles.sectionHeader}>
+          <Text style={styles.sectionTitle}>NEURAL STREAM</Text>
+          <TouchableOpacity>
+            <Text style={styles.seeAllText}>HISTORY</Text>
+          </TouchableOpacity>
+        </View>
+
+        <View style={styles.activityList}>
+          {neuralStream.length > 0 ? (
+            neuralStream.map((item, index) => (
+              <View key={item.id || index} style={styles.glassCard}>
+                <View style={styles.activityIconWrapper}>
+                  <MaterialCommunityIcons 
+                    name={item.intent === "task" ? "checkbox-marked-circle-outline" : "lightning-bolt"} 
+                    size={20} 
+                    color="#38bdf8" 
+                  />
+                </View>
+                <View style={styles.activityInfo}>
+                  <Text style={styles.activityMainText}>{item.title || "Insight Detected"}</Text>
+                  <Text style={styles.activitySubText}>{item.text}</Text>
+                </View>
+                <Text style={styles.activityTimeLabel}>
+                  {item.timestamp ? new Date(item.timestamp * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : "RECENT"}
+                </Text>
+              </View>
+            ))
+          ) : (
+            <View style={[styles.glassCard, { justifyContent: 'center', padding: 30 }]}>
+              <Text style={[styles.activitySubText, { textAlign: 'center' }]}>
+                {isListening ? "Waiting for neural signals..." : "Interface Standby"}
+              </Text>
+            </View>
+          )}
+        </View>
+
+        <TouchableOpacity 
+          style={styles.actionButton}
+          onPress={() => setIsListening(!isListening)}
+        >
+          <LinearGradient
+            colors={["#38bdf8", "#2563eb"]}
+            start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
+            style={styles.actionGradient}
+          >
+            <Text style={styles.actionButtonText}>
+              {isListening ? "DEACTIVATE INTERFACE" : "INITIALIZE SYNC"}
+            </Text>
+            <MaterialCommunityIcons name="chevron-right" size={22} color="#fff" />
+          </LinearGradient>
         </TouchableOpacity>
-      </View>
-
-      <View style={styles.auraContainer}>
-        <Animated.View
-          style={[
-            styles.aura,
-            {
-              transform: [{ scale: scaleValue }],
-              opacity: opacityValue,
-            },
-          ]}
-        />
-        <View style={styles.micCircle}>
-          <MaterialCommunityIcons 
-            name={status === "Listening" ? "microphone" : "pencil-outline"} 
-            size={50} 
-            color="#fff" 
-          />
-        </View>
-      </View>
-
-      <View style={styles.statusContainer}>
-        <Text style={styles.statusText}>{status}</Text>
-        <View style={styles.pulseIndicator} />
-      </View>
-
-      <View style={styles.statsContainer}>
-        <View style={styles.statBox}>
-          <Text style={styles.statValue}>1.2k</Text>
-          <Text style={styles.statLabel}>Nodes</Text>
-        </View>
-        <View style={[styles.statBox, styles.statBoxActive]}>
-          <Text style={[styles.statValue, { color: "#38bdf8" }]}>3</Text>
-          <Text style={styles.statLabel}>Direct Insights</Text>
-        </View>
-        <View style={styles.statBox}>
-          <Text style={styles.statValue}>12h</Text>
-          <Text style={styles.statLabel}>Uptime</Text>
-        </View>
-      </View>
-
-      <TouchableOpacity 
-        style={styles.actionButton}
-        onPress={() => setStatus(s => s === "Listening" ? "Manual Mode" : "Listening")}
-      >
-        <Text style={styles.actionButtonText}>
-          {status === "Listening" ? "Pause Listening" : "Resume Intelligence"}
-        </Text>
-      </TouchableOpacity>
+      </ScrollView>
     </View>
   );
 }
@@ -114,8 +208,18 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+  },
+  blob: {
+    position: "absolute",
+    width: 300,
+    height: 300,
+    borderRadius: 150,
+    filter: "blur(60px)",
+  },
+  scrollContent: {
     padding: 24,
     paddingTop: 60,
+    paddingBottom: 110,
   },
   header: {
     flexDirection: "row",
@@ -123,103 +227,201 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 40,
   },
+  headerGreeting: {
+    color: "#38bdf8",
+    fontSize: 11,
+    fontWeight: "800",
+    textTransform: "uppercase",
+    letterSpacing: 2,
+    marginBottom: 4,
+  },
   headerTitle: {
-    fontSize: 24,
-    fontWeight: "700",
+    fontSize: 32,
+    fontWeight: "900",
     color: "#f8fafc",
-    letterSpacing: -0.5,
+    letterSpacing: -1,
   },
-  auraContainer: {
-    alignItems: "center",
-    justifyContent: "center",
-    height: 300,
-  },
-  aura: {
-    position: "absolute",
-    width: 150,
-    height: 150,
-    borderRadius: 75,
-    backgroundColor: "#38bdf8",
-  },
-  micCircle: {
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: "#1e293b",
-    alignItems: "center",
-    justifyContent: "center",
+  profileButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 16,
+    overflow: "hidden",
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.1)",
-    elevation: 10,
-    shadowColor: "#38bdf8",
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.3,
-    shadowRadius: 20,
   },
-  statusContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 10,
-    marginBottom: 40,
-  },
-  statusText: {
-    color: "#94a3b8",
-    fontSize: 16,
-    fontWeight: "600",
-    textTransform: "uppercase",
-    letterSpacing: 1,
-  },
-  pulseIndicator: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: "#10b981",
-  },
-  statsContainer: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 40,
-  },
-  statBox: {
+  profileGradient: {
     flex: 1,
     alignItems: "center",
+    justifyContent: "center",
+  },
+  mainCoreContainer: {
+    alignItems: "center",
+    marginBottom: 40,
+  },
+  visualizerContainer: {
+    width: 260,
+    height: 260,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  pulseRing: {
+    position: "absolute",
+    width: 180,
+    height: 180,
+    borderRadius: 90,
+    backgroundColor: "#38bdf8",
+  },
+  coreButton: {
+    width: 130,
+    height: 130,
+    borderRadius: 65,
+    elevation: 25,
+    shadowColor: "#38bdf8",
+    shadowOffset: { width: 0, height: 0 },
+    shadowOpacity: 0.6,
+    shadowRadius: 30,
+    overflow: "hidden",
+    borderWidth: 4,
+    borderColor: "rgba(255,255,255,0.08)",
+  },
+  coreGradient: {
+    flex: 1,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  statusBadge: {
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "rgba(15, 23, 42, 0.7)",
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    borderRadius: 24,
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.08)",
+    marginTop: -10,
+  },
+  statusDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    marginRight: 10,
+  },
+  statusText: {
+    color: "#f1f5f9",
+    fontSize: 10,
+    fontWeight: "800",
+    letterSpacing: 1.5,
+  },
+  statsRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    marginBottom: 32,
+    gap: 12,
+  },
+  compactStatCard: {
+    flex: 1,
+    backgroundColor: "rgba(15, 23, 42, 0.4)",
     padding: 16,
-    backgroundColor: "rgba(30, 41, 59, 0.4)",
     borderRadius: 20,
-    marginHorizontal: 4,
     borderWidth: 1,
     borderColor: "rgba(255,255,255,0.05)",
+    alignItems: "center",
   },
-  statBoxActive: {
+  compactStatCardActive: {
     borderColor: "rgba(56, 189, 248, 0.3)",
     backgroundColor: "rgba(56, 189, 248, 0.05)",
   },
-  statValue: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#f8fafc",
-    marginBottom: 4,
-  },
-  statLabel: {
-    fontSize: 10,
+  compactStatLabel: {
+    fontSize: 9,
     color: "#64748b",
-    textTransform: "uppercase",
-    fontWeight: "600",
+    fontWeight: "800",
+    letterSpacing: 1,
+    marginBottom: 6,
+  },
+  compactStatValue: {
+    fontSize: 20,
+    fontWeight: "900",
+    color: "#f8fafc",
+  },
+  sectionHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: 16,
+    paddingHorizontal: 4,
+  },
+  sectionTitle: {
+    color: "#f8fafc",
+    fontSize: 14,
+    fontWeight: "800",
+    letterSpacing: 1.5,
+  },
+  seeAllText: {
+    color: "#38bdf8",
+    fontSize: 11,
+    fontWeight: "700",
+  },
+  activityList: {
+    gap: 12,
+    marginBottom: 32,
+  },
+  glassCard: {
+    backgroundColor: "rgba(15, 23, 42, 0.3)",
+    borderRadius: 20,
+    padding: 14,
+    flexDirection: "row",
+    alignItems: "center",
+    borderWidth: 1,
+    borderColor: "rgba(255,255,255,0.05)",
+  },
+  activityIconWrapper: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    backgroundColor: "rgba(56, 189, 248, 0.1)",
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: 14,
+  },
+  activityInfo: {
+    flex: 1,
+  },
+  activityMainText: {
+    color: "#f1f5f9",
+    fontSize: 14,
+    fontWeight: "700",
+  },
+  activitySubText: {
+    color: "#64748b",
+    fontSize: 12,
+    marginTop: 2,
+  },
+  activityTimeLabel: {
+    fontSize: 9,
+    color: "#475569",
+    fontWeight: "800",
   },
   actionButton: {
-    backgroundColor: "#38bdf8",
-    paddingVertical: 18,
-    borderRadius: 16,
-    alignItems: "center",
+    height: 64,
+    borderRadius: 22,
+    overflow: "hidden",
+    elevation: 10,
     shadowColor: "#38bdf8",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
+    shadowOffset: { width: 0, height: 6 },
+    shadowOpacity: 0.4,
+    shadowRadius: 12,
+  },
+  actionGradient: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 12,
   },
   actionButtonText: {
-    color: "#050a12",
-    fontSize: 16,
-    fontWeight: "700",
+    color: "#fff",
+    fontSize: 15,
+    fontWeight: "900",
+    letterSpacing: 1,
   },
 });

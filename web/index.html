@@ -16,9 +16,14 @@
                 <i class="fas fa-brain"></i>
                 <h1>SecondBrain</h1>
             </div>
-            <div class="status">
-                <span id="status-indicator" class="status-indicator active"></span>
-                <span id="status-text">Live System Connected</span>
+            <div class="header-right">
+                <div class="status">
+                    <span id="status-indicator" class="status-indicator active"></span>
+                    <span id="status-text">Neural Core Link Active</span>
+                </div>
+                <button onclick="handleLogout()" class="btn-icon" title="Terminate Session">
+                    <i class="fas fa-sign-out-alt"></i>
+                </button>
             </div>
         </header>
 
@@ -133,18 +138,18 @@
         </main>
     </div>
 
-    <div id="login-overlay" class="login-overlay" style="display: none;">
-        <div class="login-card">
-            <h2><i class="fas fa-lock"></i> Secure Access</h2>
-            <p>Enter your SecondBrain credentials to continue.</p>
-            <input type="text" id="login-username" placeholder="Username">
-            <input type="password" id="login-password" placeholder="Password">
-            <div class="login-btns">
-                <button onclick="handleLogin()" class="btn btn-primary">Login</button>
-                <button onclick="handleSignup()" class="btn btn-secondary">Sign Up</button>
-            </div>
-        </div>
-    </div>
+    <script>
+        // Immediate Auth Check
+        if (!localStorage.getItem('sb_token')) {
+            window.location.href = 'auth.html';
+        }
+
+        function handleLogout() {
+            localStorage.removeItem('sb_token');
+            localStorage.removeItem('sb_username');
+            window.location.href = 'auth.html';
+        }
+    </script>
 
     <script src="app.js"></script>
 </body>

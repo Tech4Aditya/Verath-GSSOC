@@ -1,31 +1,19 @@
-import requests
+import logging
 from typing import List
+import ollama
+from app.config import settings
 
-from app.config import EMBED_MODEL, OLLAMA_URL
+logger = logging.getLogger(__name__)
 
 
 def get_embedding(text: str) -> List[float]:
-    """Get embedding for text using Ollama."""
+    """Generate a vector embedding for a given text string using Ollama."""
     try:
-        response = requests.post(
-            f"{OLLAMA_URL}/api/embeddings",
-            json={"model": EMBED_MODEL, "prompt": text},
-            timeout=120,
+        response = ollama.embeddings(
+            model=settings.embed_model,
+            prompt=text
         )
-        response.raise_for_status()
-        payload = response.json()
-        if "embedding" not in payload:
-            raise ValueError("embedding not returned by Ollama")
-        return payload["embedding"]
+        return response["embedding"]
     except Exception as e:
-        print(f"Error getting embedding: {e}")
-        # Return zero embedding as fallback
-        return [0.0] * 768
-
-def get_embeddings_batch(texts: List[str]) -> List[List[float]]:
-    """Get embeddings for multiple texts."""
-    embeddings = []
-    for text in texts:
-        embedding = get_embedding(text)
-        embeddings.append(embedding)
-    return embeddings
+        logger.error(f"Embedding generation failed: {e}")
+        raise

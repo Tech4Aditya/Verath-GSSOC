@@ -1,14 +1,14 @@
 import requests
 
-from app.config import MODEL_NAME, OLLAMA_URL
+from app.config import settings
 
 
 def ask_llm(prompt: str) -> str:
     """Ask LLM a question using Ollama."""
     try:
         response = requests.post(
-            f"{OLLAMA_URL}/api/generate",
-            json={"model": MODEL_NAME, "prompt": prompt, "stream": False},
+            f"{settings.ollama_url}/api/generate",
+            json={"model": settings.model_name, "prompt": prompt, "stream": False},
             timeout=180,
         )
         response.raise_for_status()

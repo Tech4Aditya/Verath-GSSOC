@@ -1,34 +1,93 @@
-from typing import List, Optional
-
+from typing import Any, Dict, List, Optional
 from pydantic import BaseModel, Field
 
-from app.config import DEFAULT_RECORD_SECONDS
-from app.models.memory import Memory
+
+# ── Auth ──────────────────────────────────────────────────────────────────────
+class UserCredentials(BaseModel):
+    username: str
+    password: str
 
 
-class RecordRequest(BaseModel):
-    duration: int = Field(default=DEFAULT_RECORD_SECONDS, ge=1, le=120)
-    filename: str = "temp.wav"
+class TokenResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+
+
+# ── Memory ────────────────────────────────────────────────────────────────────
+class MemoryCreate(BaseModel):
+    text: str
+    metadata: Optional[Dict[str, Any]] = {}
+
+
+class MemoryResponse(BaseModel):
+    id: str
+    text: str
+    metadata: Dict[str, Any]
+    lifecycle: str
+    created_at: str
+
+
+# ── Query ─────────────────────────────────────────────────────────────────────
+class SourceInfo(BaseModel):
+    speaker: str = "unknown"
+    intent: str = "general"
+    timestamp: str = ""
+    importance: float = 0.0
+    confidence: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description="Cross-encoder confidence for this specific source (0–1)",
+    )
 
 
 class QueryResponse(BaseModel):
     answer: str
-    context: List[str] = Field(default_factory=list)
+    context: List[str]
+    sources: List[SourceInfo]
+    confidence_score: float = Field(
+        default=0.0,
+        ge=0.0,
+        le=1.0,
+        description=(
+            "Overall answer confidence based on the top re-ranked source. "
+            "0.0 = very uncertain, 1.0 = highly confident."
+        ),
+    )
 
 
-class SummaryResponse(BaseModel):
-    summary: str
+# ── Pipeline ──────────────────────────────────────────────────────────────────
+class ExtractRequest(BaseModel):
+    text: str
 
 
-class TimelineItem(Memory):
-    id: Optional[int] = None
+class ValidateRequest(BaseModel):
+    text: str
 
 
+class SessionRecordRequest(BaseModel):
+    session_type: str = "general"
+    duration: int = 10
+    filename: Optional[str] = None
+
+
+# ── Recording ─────────────────────────────────────────────────────────────────
+class RecordRequest(BaseModel):
+    duration: int = 10
+    filename: Optional[str] = None
+
+
+# ── Stats ─────────────────────────────────────────────────────────────────────
+class StatsResponse(BaseModel):
+    total: int
+    by_intent: Dict[str, int]
+    by_speaker: Dict[str, int]
+    avg_importance: float
+    recent_count: int
+
+
+# ── Speaker ───────────────────────────────────────────────────────────────────
 class VoiceTrainRequest(BaseModel):
     name: str
     sample_text: Optional[str] = None
-
-
-class AuthRequest(BaseModel):
-    username: str = Field(..., min_length=3, max_length=50)
-    password: str = Field(..., min_length=6)

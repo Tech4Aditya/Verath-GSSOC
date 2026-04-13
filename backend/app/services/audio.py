@@ -7,13 +7,13 @@ import sounddevice as sd
 import numpy as np
 from scipy.io.wavfile import write
 
-from app.config import DEFAULT_RECORD_SECONDS
+from app.config import settings
 
 
 def record_audio(filename: str = "temp.wav", duration: int = None, fs: int = 16000) -> str:
     """Record audio from microphone and save to file."""
     if duration is None:
-        duration = DEFAULT_RECORD_SECONDS
+        duration = settings.default_record_seconds
     
     path = Path(filename).resolve()
     os.makedirs(path.parent, exist_ok=True)

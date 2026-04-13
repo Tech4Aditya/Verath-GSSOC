@@ -1,45 +1,94 @@
-from app.services.embedding import get_embedding
-from app.services.llm import ask_llm_with_context
-from app.services.memory_store import search, all_memories
-from typing import List, Dict
+import logging
+from typing import Any, Dict, List, Optional
+
+from app.services.memory_store import search_memories
+from app.services.reranker import rerank
+from app.services.llm import ask_llm
+from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+# How many candidates to pull from ChromaDB before re-ranking
+_N_RETRIEVE = 20
+# How many to keep after re-ranking and pass to the LLM
+_N_FINAL = 5
 
 
-def query_system(user_query: str, user_id: str, limit: int = 5) -> Dict:
-    """Query the memory system with RAG."""
+async def run_query(
+    user_id: str,
+    query: str,
+    limit: int = 5,
+    intent_filter: Optional[str] = None,
+    min_importance: float = 0.0,
+) -> Dict[str, Any]:
+    """
+    Full RAG pipeline:
+      1. Retrieve N candidates from ChromaDB by vector similarity
+      2. Re-rank with cross-encoder
+      3. Build a grounded prompt and call Ollama
+      4. Return answer, sources, and confidence_score
+    """
+
+    # ── Step 1: Broad retrieval ───────────────────────────────────────────────
+    candidates = await search_memories(
+        user_id=user_id,
+        query=query,
+        limit=_N_RETRIEVE,          # intentionally wider than the final limit
+        intent_filter=intent_filter,
+        min_importance=min_importance,
+    )
+
+    if not candidates:
+        return {
+            "answer": "I couldn't find any relevant memories for that query.",
+            "context": [],
+            "sources": [],
+            "confidence_score": 0.0,
+        }
+
+    # ── Step 2: Cross-encoder re-ranking ─────────────────────────────────────
+    reranked = rerank(query=query, candidates=candidates, top_k=min(limit, _N_FINAL))
+
+    # ── Step 3: Build grounded context for LLM ───────────────────────────────
+    context_texts = [r["text"] for r in reranked]
+    context_block = "\n\n".join(
+        f"[Memory {i+1}]: {text}" for i, text in enumerate(context_texts)
+    )
+
+    prompt = (
+        f"You are a personal memory assistant. Answer the question using ONLY "
+        f"the memories provided below. If the memories don't contain enough "
+        f"information, say so honestly.\n\n"
+        f"Memories:\n{context_block}\n\n"
+        f"Question: {query}\n\n"
+        f"Answer:"
+    )
+
+    # ── Step 4: LLM call ──────────────────────────────────────────────────────
     try:
-        # Get embedding for the query
-        query_embedding = get_embedding(user_query)
-        
-        # Search for relevant memories
-        memories = search(query_embedding, user_id=user_id, k=limit)
-        
-        if not memories:
-            return {"answer": "I don't have any memories related to your question.", "context": []}
-        
-        # Build context from memories
-        context_items = [item.get("text", "") for item in memories if item.get("text")]
-        context = "\n".join([
-            f"[{mem.get('speaker', 'unknown')}]: {mem.get('text', '')}"
-            for mem in memories
-        ])
-        
-        # Ask LLM with context
-        answer = ask_llm_with_context(user_query, context)
-        
-        return {"answer": answer, "context": context_items}
-        
+        answer = ask_llm(prompt)
     except Exception as e:
-        return {"answer": f"Error querying system: {str(e)}", "context": []}
+        logger.error(f"LLM call failed: {e}")
+        answer = "I found relevant memories but couldn't generate a response right now."
 
-def query_memories_by_speaker(speaker: str, limit: int = 10) -> List[dict]:
-    """Get all memories from a specific speaker."""
-    all_mems = all_memories()
-    speaker_memories = [
-        mem for mem in all_mems 
-        if mem.get('speaker', '').lower() == speaker.lower()
-    ]
-    
-    # Sort by timestamp (most recent first)
-    speaker_memories.sort(key=lambda x: x.get('timestamp', 0), reverse=True)
-    
-    return speaker_memories[:limit]
+    # ── Step 5: Build source attribution with confidence ─────────────────────
+    sources = []
+    for r in reranked:
+        meta = r.get("metadata", {})
+        sources.append({
+            "speaker":    meta.get("speaker", "unknown"),
+            "intent":     meta.get("intent", "general"),
+            "timestamp":  meta.get("timestamp", ""),
+            "importance": meta.get("importance", 0.0),
+            "confidence": r.get("confidence", 0.0),   # per-source confidence
+        })
+
+    # Overall confidence = top result's confidence score
+    confidence_score = reranked[0].get("confidence", 0.0) if reranked else 0.0
+
+    return {
+        "answer": answer,
+        "context": context_texts,
+        "sources": sources,
+        "confidence_score": confidence_score,
+    }

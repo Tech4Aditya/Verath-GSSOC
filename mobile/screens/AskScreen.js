@@ -1,84 +1,241 @@
-import React, { useState } from "react";
-import { View, Text, StyleSheet, TextInput, TouchableOpacity, ScrollView, KeyboardAvoidingView, Platform } from "react-native";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { LinearGradient } from "expo-linear-gradient";
+import React, { useState, useRef, useEffect } from 'react';
+import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  ScrollView,
+  ActivityIndicator,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  StyleSheet,
+} from 'react-native';
+import { FontAwesome } from '@expo/vector-icons';
+import { askQuestion, startRecording } from '../services/api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
-export default function AskScreen() {
-  const [query, setQuery] = useState("");
-  const [messages, setMessages] = useState([
-    { id: 1, text: "System ready. Ask me anything from your memories.", isBot: true },
-  ]);
+export default function AskScreen({ navigation }) {
+  const [query, setQuery] = useState('');
+  const [answer, setAnswer] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [sources, setSources] = useState([]);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [showOnboarding, setShowOnboarding] = useState(false);
+  const [onboardingStep, setOnboardingStep] = useState(0);
+  const scrollViewRef = useRef(null);
 
-  const handleSend = () => {
-    if (!query.trim()) return;
-    
-    const userMsg = { id: Date.now(), text: query, isBot: false };
-    setMessages(prev => [...prev, userMsg]);
-    setQuery("");
+  useEffect(() => {
+    checkAuth();
+  }, []);
 
-    // Simulate response
-    setTimeout(() => {
-      const botMsg = { 
-        id: Date.now() + 1, 
-        text: "I've analyzed your project notes. You previously mentioned wanting to improve the UI structure. Is that what you're referring to?", 
-        isBot: true 
-      };
-      setMessages(prev => [...prev, botMsg]);
-    }, 1000);
+  const checkAuth = async () => {
+    const token = await AsyncStorage.getItem('sb_token');
+    if (token) {
+      setIsAuthenticated(true);
+    } else {
+      setShowOnboarding(true);
+    }
   };
 
+  const handleOnboardingNext = async () => {
+    if (onboardingStep === 0) {
+      setOnboardingStep(1);
+    } else if (onboardingStep === 1) {
+      setOnboardingStep(2);
+    } else {
+      setShowOnboarding(false);
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!query.trim()) return;
+
+    setLoading(true);
+    setAnswer('');
+    setSources([]);
+
+    try {
+      const response = await askQuestion(query);
+      setAnswer(response.answer);
+      setSources(response.sources || []);
+      setQuery('');
+    } catch (error) {
+      Alert.alert('Error', 'Failed to get answer. Please try again.');
+      setAnswer('Sorry, I could not connect to your SecondBrain. Please check your connection.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVoiceInput = async () => {
+    if (recording) return;
+
+    setRecording(true);
+    setAnswer('');
+    setSources([]);
+
+    try {
+      const response = await startRecording(5);
+      if (response.success) {
+        setAnswer('Processing your voice input...');
+        setTimeout(async () => {
+          try {
+            const queryResponse = await askQuestion('What did I just record?');
+            setAnswer(queryResponse.answer);
+            setSources(queryResponse.sources || []);
+          } catch (error) {
+            setAnswer('Voice recording processed. You can now ask questions about your memory.');
+          }
+        }, 2000);
+      } else {
+        Alert.alert('Error', response.error || 'Failed to record audio');
+      }
+    } catch (error) {
+      Alert.alert('Error', 'Failed to record audio');
+    } finally {
+      setRecording(false);
+    }
+  };
+
+  const OnboardingOverlay = () => (
+    <View style={styles.overlay}>
+      <View style={styles.onboardingCard}>
+        {onboardingStep === 0 && (
+          <>
+            <FontAwesome name="brain" size={60} color="#6366f1" />
+            <Text style={styles.onboardingTitle}>Welcome to SecondBrain</Text>
+            <Text style={styles.onboardingText}>
+              What do you want to remember? Lectures, meetings, conversations, or daily life?
+            </Text>
+            <TouchableOpacity style={styles.onboardingButton} onPress={handleOnboardingNext}>
+              <Text style={styles.onboardingButtonText}>Continue</Text>
+            </TouchableOpacity>
+          </>
+        )}
+
+        {onboardingStep === 1 && (
+          <>
+            <FontAwesome name="microphone" size={60} color="#6366f1" />
+            <Text style={styles.onboardingTitle}>Microphone Access</Text>
+            <Text style={styles.onboardingText}>
+              SecondBrain needs microphone access to record and transcribe your conversations.
+            </Text>
+            <TouchableOpacity style={styles.onboardingButton} onPress={handleOnboardingNext}>
+              <Text style={styles.onboardingButtonText}>Allow Access</Text>
+            </TouchableOpacity>
+          </>
+        )}
+
+        {onboardingStep === 2 && (
+          <>
+            <FontAwesome name="lightbulb" size={60} color="#6366f1" />
+            <Text style={styles.onboardingTitle}>Try It Out</Text>
+            <Text style={styles.onboardingText}>
+              Ask anything like "What did I do today?" or record a voice note.
+            </Text>
+            <TouchableOpacity style={styles.onboardingButton} onPress={handleOnboardingNext}>
+              <Text style={styles.onboardingButtonText}>Get Started</Text>
+            </TouchableOpacity>
+          </>
+        )}
+      </View>
+    </View>
+  );
+
+  if (showOnboarding) {
+    return <OnboardingOverlay />;
+  }
+
   return (
-    <KeyboardAvoidingView 
-      behavior={Platform.OS === "ios" ? "padding" : "height"}
+    <KeyboardAvoidingView
       style={styles.container}
+      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
     >
-      <LinearGradient
-        colors={["#050a12", "#0d1117"]}
-        style={StyleSheet.absoluteFill}
-      />
-      
       <View style={styles.header}>
-        <Text style={styles.headerTitle}>Neural Query</Text>
+        <Text style={styles.headerTitle}>SecondBrain</Text>
+        <TouchableOpacity onPress={() => navigation.navigate('Settings')}>
+          <FontAwesome name="cog" size={24} color="#fff" />
+        </TouchableOpacity>
       </View>
 
-      <ScrollView contentContainerStyle={styles.chatContainer}>
-        {messages.map(msg => (
-          <View 
-            key={msg.id} 
-            style={[
-              styles.messageWrapper, 
-              msg.isBot ? styles.botWrapper : styles.userWrapper
-            ]}
-          >
-            <View style={[
-              styles.messageBubble,
-              msg.isBot ? styles.botBubble : styles.userBubble
-            ]}>
-              <Text style={[
-                styles.messageText,
-                msg.isBot ? styles.botText : styles.userText
-              ]}>
-                {msg.text}
-              </Text>
+      <ScrollView
+        ref={scrollViewRef}
+        style={styles.content}
+        contentContainerStyle={styles.contentContainer}
+        onContentSizeChange={() => scrollViewRef.current?.scrollToEnd({ animated: true })}
+      >
+        {answer ? (
+          <View style={styles.answerContainer}>
+            <View style={styles.answerHeader}>
+              <FontAwesome name="robot" size={20} color="#6366f1" />
+              <Text style={styles.answerLabel}>SecondBrain</Text>
             </View>
+            <Text style={styles.answerText}>{answer}</Text>
+            
+            {sources.length > 0 && (
+              <View style={styles.sourcesContainer}>
+                <Text style={styles.sourcesTitle}>Sources</Text>
+                {sources.map((source, index) => (
+                  <View key={index} style={styles.sourceItem}>
+                    <FontAwesome name="user-circle" size={14} color="#888" />
+                    <Text style={styles.sourceText}>
+                      {source.speaker} • {source.timestamp} • {(source.importance * 100).toFixed(0)}%
+                    </Text>
+                  </View>
+                ))}
+              </View>
+            )}
           </View>
-        ))}
+        ) : (
+          <View style={styles.placeholderContainer}>
+            <FontAwesome name="comments" size={60} color="#374151" />
+            <Text style={styles.placeholderText}>
+              Ask anything about your memories, or record a voice note
+            </Text>
+          </View>
+        )}
+
+        {loading && (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color="#6366f1" />
+            <Text style={styles.loadingText}>Thinking...</Text>
+          </View>
+        )}
+
+        {recording && (
+          <View style={styles.recordingContainer}>
+            <View style={styles.recordingIndicator} />
+            <Text style={styles.recordingText}>Recording...</Text>
+          </View>
+        )}
       </ScrollView>
 
-      <View style={styles.inputArea}>
-        <View style={styles.inputContainer}>
-          <TextInput
-            style={styles.input}
-            placeholder="Search memories..."
-            placeholderTextColor="#64748b"
-            value={query}
-            onChangeText={setQuery}
-            multiline
-          />
-          <TouchableOpacity style={styles.sendButton} onPress={handleSend}>
-            <MaterialCommunityIcons name="arrow-up" size={24} color="#050a12" />
-          </TouchableOpacity>
-        </View>
+      <View style={styles.inputContainer}>
+        <TextInput
+          style={styles.input}
+          placeholder="Ask anything..."
+          value={query}
+          onChangeText={setQuery}
+          onSubmitEditing={handleSubmit}
+          multiline
+          maxLength={500}
+        />
+        <TouchableOpacity
+          style={[styles.iconButton, recording && styles.iconButtonDisabled]}
+          onPress={handleVoiceInput}
+          disabled={recording || loading}
+        >
+          <FontAwesome name="microphone" size={24} color="#6366f1" />
+        </TouchableOpacity>
+        <TouchableOpacity
+          style={[styles.sendButton, !query.trim() && styles.sendButtonDisabled]}
+          onPress={handleSubmit}
+          disabled={!query.trim() || loading}
+        >
+          <FontAwesome name="paper-plane" size={24} color="#fff" />
+        </TouchableOpacity>
       </View>
     </KeyboardAvoidingView>
   );
@@ -87,87 +244,196 @@ export default function AskScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#111827',
+  },
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  onboardingCard: {
+    backgroundColor: '#1f2937',
+    borderRadius: 20,
+    padding: 30,
+    alignItems: 'center',
+    width: '100%',
+    maxWidth: 400,
+  },
+  onboardingTitle: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#fff',
+    marginTop: 20,
+    marginBottom: 10,
+    textAlign: 'center',
+  },
+  onboardingText: {
+    fontSize: 16,
+    color: '#9ca3af',
+    textAlign: 'center',
+    marginBottom: 30,
+    lineHeight: 24,
+  },
+  onboardingButton: {
+    backgroundColor: '#6366f1',
+    paddingVertical: 15,
+    paddingHorizontal: 40,
+    borderRadius: 10,
+    width: '100%',
+  },
+  onboardingButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+    textAlign: 'center',
   },
   header: {
-    paddingTop: 60,
-    paddingHorizontal: 24,
-    paddingBottom: 20,
-    borderBottomWidth: 1,
-    borderBottomColor: "rgba(255,255,255,0.05)",
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: 20,
+    paddingTop: Platform.OS === 'ios' ? 60 : 20,
+    backgroundColor: '#1f2937',
   },
   headerTitle: {
-    fontSize: 20,
-    fontWeight: "700",
-    color: "#f8fafc",
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#fff',
   },
-  chatContainer: {
-    padding: 24,
-    paddingBottom: 40,
+  content: {
+    flex: 1,
   },
-  messageWrapper: {
-    marginBottom: 20,
-    flexDirection: "row",
+  contentContainer: {
+    padding: 20,
+    paddingBottom: 100,
   },
-  botWrapper: {
-    justifyContent: "flex-start",
+  answerContainer: {
+    backgroundColor: '#1f2937',
+    borderRadius: 15,
+    padding: 20,
+    marginBottom: 10,
   },
-  userWrapper: {
-    justifyContent: "flex-end",
+  answerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
   },
-  messageBubble: {
-    maxWidth: "80%",
-    padding: 16,
-    borderRadius: 20,
+  answerLabel: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#6366f1',
+    marginLeft: 10,
   },
-  botBubble: {
-    backgroundColor: "rgba(30, 41, 59, 0.6)",
-    borderBottomLeftRadius: 4,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.05)",
+  answerText: {
+    fontSize: 16,
+    color: '#fff',
+    lineHeight: 24,
   },
-  userBubble: {
-    backgroundColor: "#38bdf8",
-    borderBottomRightRadius: 4,
+  sourcesContainer: {
+    marginTop: 15,
+    paddingTop: 15,
+    borderTopWidth: 1,
+    borderTopColor: '#374151',
   },
-  messageText: {
-    fontSize: 15,
-    lineHeight: 22,
+  sourcesTitle: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#9ca3af',
+    marginBottom: 10,
   },
-  botText: {
-    color: "#f8fafc",
+  sourceItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 5,
   },
-  userText: {
-    color: "#050a12",
-    fontWeight: "500",
+  sourceText: {
+    fontSize: 12,
+    color: '#9ca3af',
+    marginLeft: 8,
   },
-  inputArea: {
-    padding: 24,
-    paddingTop: 0,
-    backgroundColor: "transparent",
+  placeholderContainer: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+  },
+  placeholderText: {
+    fontSize: 16,
+    color: '#6b7280',
+    textAlign: 'center',
+    marginTop: 20,
+  },
+  loadingContainer: {
+    alignItems: 'center',
+    paddingVertical: 30,
+  },
+  loadingText: {
+    fontSize: 16,
+    color: '#9ca3af',
+    marginTop: 10,
+  },
+  recordingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 20,
+    backgroundColor: '#1f2937',
+    borderRadius: 10,
+    marginBottom: 10,
+  },
+  recordingIndicator: {
+    width: 12,
+    height: 12,
+    borderRadius: 6,
+    backgroundColor: '#ef4444',
+    marginRight: 10,
+  },
+  recordingText: {
+    fontSize: 16,
+    color: '#fff',
   },
   inputContainer: {
-    flexDirection: "row",
-    alignItems: "center",
-    backgroundColor: "#1e293b",
-    borderRadius: 24,
-    paddingLeft: 20,
-    paddingRight: 6,
-    paddingVertical: 6,
-    borderWidth: 1,
-    borderColor: "rgba(255,255,255,0.1)",
+    flexDirection: 'row',
+    alignItems: 'flex-end',
+    padding: 20,
+    backgroundColor: '#1f2937',
+    borderTopWidth: 1,
+    borderTopColor: '#374151',
   },
   input: {
     flex: 1,
-    color: "#f8fafc",
+    backgroundColor: '#374151',
+    borderRadius: 25,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    color: '#fff',
     fontSize: 16,
     maxHeight: 100,
+    marginRight: 10,
+  },
+  iconButton: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: '#374151',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 10,
+  },
+  iconButtonDisabled: {
+    opacity: 0.5,
   },
   sendButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    backgroundColor: "#38bdf8",
-    alignItems: "center",
-    justifyContent: "center",
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    backgroundColor: '#6366f1',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  sendButtonDisabled: {
+    backgroundColor: '#374151',
+    opacity: 0.5,
   },
 });

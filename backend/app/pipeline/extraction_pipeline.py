@@ -1,0 +1,294 @@
+import logging
+import re
+import dateparser
+from typing import Dict, List, Optional, Any
+from datetime import datetime, timedelta
+from app.services.llm import ask_llm
+from app.core.logging_config import logger
+
+class ExtractionPipeline:
+    """Multi-stage hybrid extraction pipeline with rule-based + LLM refinement."""
+    
+    # Correction detection patterns
+    CORRECTION_PATTERNS = [
+        r'\bno no\b',
+        r'\bi mean\b',
+        r'\bi meant\b',
+        r'\bnot that\b',
+        r'\bactually\b',
+        r'\bwait\b',
+        r'\bcorrection\b',
+        r'\bsorry\b'
+    ]
+    
+    # Intent detection patterns
+    INTENT_PATTERNS = {
+        'meeting': [
+            r'\bmeet\b', r'\bmeeting\b', r'\bcall\b', r'\bconference\b', 
+            r'\bdiscuss\b', r'\bappointment\b', r'\bget together\b'
+        ],
+        'deadline': [
+            r'\bdeadline\b', r'\bdue\b', r'\bsubmit\b', r'\bcomplete by\b',
+            r'\bfinish by\b', r'\bneed to\b'
+        ],
+        'task': [
+            r'\btask\b', r'\bto do\b', r'\bneed to\b', r'\bhave to\b',
+            r'\bgotta\b', r'\bshould\b'
+        ],
+        'commitment': [
+            r'\bpromise\b', r'\bcommit\b', r'\bagree\b', r'\bwill\b',
+            r'\bsure\b', r'\babsolutely\b'
+        ],
+        'reminder': [
+            r'\bremind\b', r'\bdon\'t forget\b', r'\bremember\b',
+            r'\bnote\b', r'\bmake sure\b'
+        ]
+    }
+    
+    def __init__(self):
+        self.correction_regex = re.compile('|'.join(self.CORRECTION_PATTERNS), re.IGNORECASE)
+        self.intent_regexes = {
+            intent: re.compile('|'.join(patterns), re.IGNORECASE)
+            for intent, patterns in self.INTENT_PATTERNS.items()
+        }
+    
+    async def extract(self, raw_text: str) -> Dict[str, Any]:
+        """
+        Run full extraction pipeline:
+        1. Rule-based cleaning
+        2. Correction detection
+        3. Temporal parsing
+        4. Intent detection (rule-based)
+        5. Entity extraction (rule-based)
+        6. LLM refinement
+        """
+        try:
+            logger.info("Starting extraction pipeline")
+            
+            # Stage 1: Rule-based cleaning
+            cleaned_text = self._clean_text(raw_text)
+            
+            # Stage 2: Correction detection
+            has_correction, corrected_text = self._detect_correction(cleaned_text)
+            
+            # Stage 3: Temporal parsing
+            temporal_entities = self._parse_temporal_entities(corrected_text)
+            
+            # Stage 4: Intent detection (rule-based)
+            intent = self._detect_intent(corrected_text)
+            
+            # Stage 5: Entity extraction
+            entities = self._extract_entities(corrected_text, temporal_entities)
+            
+            # Stage 6: LLM refinement
+            refined_data = await self._llm_refine(corrected_text, intent, entities)
+            
+            # Combine results
+            result = {
+                "raw_text": raw_text,
+                "cleaned_text": corrected_text,
+                "has_correction": has_correction,
+                "intent": refined_data.get("intent", intent),
+                "entities": {
+                    **entities,
+                    **refined_data.get("entities", {})
+                },
+                "summary": refined_data.get("summary", ""),
+                "importance_boost": self._calculate_importance_boost(intent, entities)
+            }
+            
+            logger.info(f"Extraction complete: intent={result['intent']}, corrections={has_correction}")
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error in extraction pipeline: {e}", exc_info=True)
+            raise
+    
+    def _clean_text(self, text: str) -> str:
+        """Rule-based text cleaning."""
+        # Remove filler words and repetitions
+        text = re.sub(r'\b(um|uh|ah|like|you know)\b', '', text, flags=re.IGNORECASE)
+        # Fix common transcription errors
+        text = re.sub(r'\s+', ' ', text).strip()
+        return text
+    
+    def _detect_correction(self, text: str) -> tuple[bool, str]:
+        """Detect speech corrections and handle them."""
+        if self.correction_regex.search(text):
+            # Split on correction pattern and keep only the last part
+            parts = self.correction_regex.split(text)
+            if len(parts) > 1:
+                # Keep the part after the last correction
+                corrected_text = parts[-1].strip()
+                logger.info(f"Correction detected: '{text[:50]}...' -> '{corrected_text[:50]}...'")
+                return True, corrected_text
+        return False, text
+    
+    def _parse_temporal_entities(self, text: str) -> Dict[str, Any]:
+        """Parse temporal expressions using dateparser."""
+        temporal_entities = {
+            "dates": [],
+            "times": [],
+            "relative_times": []
+        }
+        
+        # Find potential temporal expressions
+        time_patterns = [
+            r'\btomorrow\b',
+            r'\byesterday\b',
+            r'\btoday\b',
+            r'\bday after tomorrow\b',
+            r'\bnext week\b',
+            r'\bnext month\b',
+            r'\bin \d+ days\b',
+            r'\bin \d+ hours\b',
+            r'\bnext \w+day\b'
+        ]
+        
+        for pattern in time_patterns:
+            matches = re.finditer(pattern, text, re.IGNORECASE)
+            for match in matches:
+                phrase = match.group()
+                parsed = dateparser.parse(phrase, settings={
+                    'RELATIVE_BASE': datetime.utcnow(),
+                    'PREFER_DATES_FROM': 'future'
+                })
+                
+                if parsed:
+                    temporal_entities["dates"].append({
+                        "phrase": phrase,
+                        "parsed_date": parsed.isoformat(),
+                        "is_relative": True
+                    })
+        
+        return temporal_entities
+    
+    def _detect_intent(self, text: str) -> Optional[str]:
+        """Rule-based intent detection."""
+        for intent, regex in self.intent_regexes.items():
+            if regex.search(text):
+                return intent
+        return "general"
+    
+    def _extract_entities(self, text: str, temporal_entities: Dict) -> Dict[str, Any]:
+        """Extract entities from text."""
+        entities = {
+            "people": self._extract_people(text),
+            "locations": self._extract_locations(text),
+            "organizations": self._extract_organizations(text),
+            "dates": temporal_entities.get("dates", []),
+            "times": temporal_entities.get("times", [])
+        }
+        return entities
+    
+    def _extract_people(self, text: str) -> List[str]:
+        """Extract person names (simple pattern matching)."""
+        # Capitalized words that might be names
+        pattern = r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*\b'
+        matches = re.findall(pattern, text)
+        # Filter out common non-name words
+        stop_words = {'The', 'This', 'That', 'It', 'He', 'She', 'They', 'Today', 'Tomorrow'}
+        names = [m for m in matches if m not in stop_words and len(m) > 2]
+        return list(set(names))[:5]  # Return unique names, max 5
+    
+    def _extract_locations(self, text: str) -> List[str]:
+        """Extract location names."""
+        location_patterns = [
+            r'\bat \b[A-Z][a-z]+\b',
+            r'\bin \b[A-Z][a-z]+\b',
+            r'\bto \b[A-Z][a-z]+\b'
+        ]
+        locations = []
+        for pattern in location_patterns:
+            matches = re.findall(pattern, text)
+            locations.extend([m.strip() for m in matches])
+        return list(set(locations))[:3]
+    
+    def _extract_organizations(self, text: str) -> List[str]:
+        """Extract organization names."""
+        # Simple pattern: capitalized words that might be org names
+        org_patterns = [
+            r'\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*(?:Inc|Corp|LLC|Company|Org)\b'
+        ]
+        orgs = []
+        for pattern in org_patterns:
+            matches = re.findall(pattern, text)
+            orgs.extend(matches)
+        return list(set(orgs))[:3]
+    
+    async def _llm_refine(self, text: str, intent: str, entities: Dict) -> Dict[str, Any]:
+        """Use LLM to refine extraction results."""
+        prompt = f"""Analyze this text and provide a refined extraction:
+
+Text: {text}
+
+Current intent: {intent}
+Current entities: {entities}
+
+Provide:
+1. Refined intent (one of: meeting, deadline, task, commitment, reminder, general)
+2. Refined summary (1-2 sentences)
+3. Any additional entities (people, locations, dates, times)
+
+Format as JSON:
+{{
+    "intent": "...",
+    "summary": "...",
+    "entities": {{
+        "people": [...],
+        "locations": [...],
+        "dates": [...],
+        "times": [...]
+    }}
+}}"""
+        
+        try:
+            response = ask_llm(prompt)
+            # Parse LLM response (simple JSON extraction)
+            # In production, use proper JSON parsing with error handling
+            return self._parse_llm_response(response)
+        except Exception as e:
+            logger.error(f"LLM refinement failed: {e}")
+            return {"intent": intent, "summary": text[:100], "entities": entities}
+    
+    def _parse_llm_response(self, response: str) -> Dict[str, Any]:
+        """Parse LLM JSON response."""
+        # Simple JSON extraction - in production use proper JSON parsing
+        try:
+            import json
+            # Find JSON in response
+            start = response.find('{')
+            end = response.rfind('}') + 1
+            if start != -1 and end > start:
+                json_str = response[start:end]
+                return json.loads(json_str)
+        except:
+            pass
+        return {"intent": "general", "summary": response[:100], "entities": {}}
+    
+    def _calculate_importance_boost(self, intent: str, entities: Dict) -> float:
+        """Calculate importance boost based on intent and entities."""
+        boost = 0.0
+        
+        # Intent-based boost
+        intent_boosts = {
+            'deadline': 0.3,
+            'meeting': 0.2,
+            'commitment': 0.25,
+            'task': 0.15,
+            'reminder': 0.1,
+            'general': 0.0
+        }
+        boost += intent_boosts.get(intent, 0.0)
+        
+        # Entity-based boost
+        if entities.get('dates'):
+            boost += 0.1
+        if entities.get('people'):
+            boost += 0.05
+        if entities.get('locations'):
+            boost += 0.05
+        
+        return min(boost, 0.5)  # Cap at 0.5
+
+extraction_pipeline = ExtractionPipeline()

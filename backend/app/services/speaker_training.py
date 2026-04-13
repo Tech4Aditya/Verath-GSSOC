@@ -4,13 +4,13 @@ from typing import Dict, List
 
 import numpy as np
 
-from app.config import VOICE_DB_PATH
+from app.config import settings
 from app.services.embedding import get_embedding
 
-os.makedirs(os.path.dirname(VOICE_DB_PATH), exist_ok=True)
+os.makedirs(os.path.dirname(settings.voice_db_path), exist_ok=True)
 
-if os.path.exists(VOICE_DB_PATH):
-    with open(VOICE_DB_PATH, "rb") as file:
+if os.path.exists(settings.voice_db_path):
+    with open(settings.voice_db_path, "rb") as file:
         voice_profiles: Dict[str, np.ndarray] = pickle.load(file)
 else:
     voice_profiles = {}
@@ -18,7 +18,7 @@ else:
 
 def save():
     """Save voice profiles to disk."""
-    with open(VOICE_DB_PATH, "wb") as file:
+    with open(settings.voice_db_path, "wb") as file:
         pickle.dump(voice_profiles, file)
 
 
