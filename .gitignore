@@ -14,6 +14,7 @@ backend/develop-eggs/
 backend/dist/
 backend/downloads/
 backend/eggs/
+backend/logs/
 backend/.eggs/
 backend/lib/
 backend/lib64/
@@ -83,3 +84,5 @@ Thumbs.db
 .idea/
 *.swp
 *.swo
+
+backend/logs/

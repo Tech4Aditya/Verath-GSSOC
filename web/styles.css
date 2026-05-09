@@ -792,6 +792,11 @@ p  { font-size: 0.9375rem; color: var(--text-secondary); }
   animation: float 6s var(--ease-out) infinite;
 }
 
+/* Mobile Header (Hidden on Desktop) */
+.mobile-header {
+  display: none;
+}
+
 /* Responsive */
 @media (max-width: 1024px) {
   .stat-grid { grid-template-columns: repeat(2, 1fr); }
@@ -799,8 +804,100 @@ p  { font-size: 0.9375rem; color: var(--text-secondary); }
 }
 
 @media (max-width: 768px) {
-  .sidebar { width: 100%; position: relative; height: auto; border-right: none; border-bottom: 1px solid var(--verath-border); }
-  .main-content { margin-left: 0; }
-  .stat-grid { grid-template-columns: 1fr; }
-  .page-header { flex-direction: column; gap: var(--space-md); }
+  /* Fix flex layout for mobile */
+  .app-container { flex-direction: column; }
+
+  /* Add padding for the bottom navigation bar */
+  body { padding-bottom: 70px; }
+  
+  /* Mobile Header */
+  .mobile-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-md) var(--space-lg);
+    background: var(--verath-surface);
+    border-bottom: 1px solid var(--verath-border);
+    position: sticky;
+    top: 0;
+    z-index: 100;
+  }
+  
+  /* Sidebar becomes bottom navigation */
+  .sidebar { 
+    position: fixed; 
+    bottom: 0; 
+    left: 0; 
+    width: 100%; 
+    height: 70px; 
+    flex-direction: row; 
+    align-items: center; 
+    justify-content: space-around;
+    padding: 0 var(--space-sm);
+    background: rgba(17, 17, 24, 0.85); /* var(--verath-surface) with opacity */
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border-top: 1px solid var(--verath-border);
+    border-bottom: none;
+    border-right: none;
+    z-index: 999;
+    gap: 0;
+  }
+  
+  /* Hide desktop-only elements in sidebar */
+  .sidebar .sidebar-logo, 
+  .sidebar .sidebar-user { 
+    display: none; 
+  }
+  
+  /* Navigation List */
+  .nav-list { 
+    flex-direction: row; 
+    width: 100%; 
+    justify-content: space-around; 
+    margin: 0; 
+    padding: 0; 
+  }
+  
+  /* Navigation Items */
+  .nav-item { 
+    flex-direction: column; 
+    gap: 4px; 
+    padding: 8px 4px; 
+    border-radius: var(--radius-md); 
+    flex: 1; 
+    justify-content: center; 
+    align-items: center; 
+  }
+  
+  /* Make text smaller on mobile */
+  .nav-item span:not(.nav-badge) { font-size: 0.65rem; }
+  .nav-item i { font-size: 18px; margin-bottom: 2px; }
+  
+  /* Adjust notification badges for bottom nav */
+  .nav-badge { 
+    position: absolute; 
+    top: 4px; 
+    right: 20%; 
+    padding: 2px 5px; 
+    font-size: 0.6rem; 
+    margin: 0; 
+  }
+  
+  /* Main Content Layout */
+  .main-content { 
+    margin-left: 0; 
+    padding: var(--space-md);
+    min-height: calc(100vh - 70px);
+  }
+  
+  .stat-grid { grid-template-columns: 1fr 1fr; gap: var(--space-sm); }
+  
+  .page-header { flex-direction: column; gap: var(--space-md); align-items: flex-start; }
+  .header-actions { width: 100%; justify-content: space-between; }
+  
+  .ask-container { height: calc(100vh - 200px); }
+  
+  /* Better layout for memory cards on mobile */
+  .memories-grid { grid-template-columns: 1fr; }
 }
